@@ -26,10 +26,6 @@ CROP_PCT="0.875"              # resize -> center crop 的 crop 比例
 INPUT_SIZE="224"              # 最終輸入尺寸（224x224）
 INTERPOLATION="bilinear"      # "bilinear" 或 "bicubic"
 
-# ============================================================
-# ======================= 防呆檢查區 ==========================
-# ============================================================
-
 if [[ "${DATASET}" != "cifar10" && "${DATASET}" != "imagenet" ]]; then
   echo "[ERROR] DATASET must be 'cifar10' or 'imagenet'. Got: ${DATASET}" >&2
   exit 1
