@@ -2,126 +2,78 @@
 set -euo pipefail
 
 # ============================================================
-# run_attack.sh
-# - Wrapper for: python run_attack.py ...
-# - You can override defaults via:
-#     1) environment variables (recommended), e.g.
-#        DATA_DIR=/path LABEL_FILE=/path ./run_attack.sh
-#     2) CLI options, e.g.
-#        ./run_attack.sh --gpu 0 --batchsize 32
+# =============== 使用者可調整參數（只改這裡） =================
 # ============================================================
 
-# -----------------------------
-# Defaults (edit here or override)
-# -----------------------------
-GPU="${GPU:-0}"
+# --- device ---
+GPU="0"                       # 使用哪張 GPU（0/1/2...）；沒 GPU 會自動用 CPU
 
-# ImageNet preprocessing
-CROP_PCT="${CROP_PCT:-0.875}"
-INPUT_SIZE="${INPUT_SIZE:-224}"
-INTERP="${INTERP:-bilinear}"  # bilinear | bicubic
+# --- dataset ---
+DATASET="cifar10"             # "cifar10" 或 "imagenet"
+DATA_DIR="DATA_PATH"          # ImageNet 才需要；CIFAR-10 只是下載位置/快取位置
+LABEL_FILE="LABEL_PATH"       # ImageNet 才需要（val label 對照檔）
 
-# Dataset
-DATA_DIR="${DATA_DIR:-DATA_PATH}"
-LABEL_FILE="${LABEL_FILE:-LABEL_PATH}"
-DATASET="${DATASET:-imagenet}"   # imagenet | cifar10
+# --- dataloader ---
+BATCHSIZE="20"                # batch size（越大越快但更吃顯存）
+NUM_WORKERS="16"              # dataloader workers（Linux 可拉高；太高可能反而卡）
 
-# Dataloader
-BATCHSIZE="${BATCHSIZE:-20}"
-NUM_WORKERS="${NUM_WORKERS:-16}"
+# --- model / attack ---
+MODEL_NAME="resnet50_at"      # 必須在 cifar_model_zoo / imagenet_model_zoo
+ATTACK_NAME="pgd"             # 必須在 registry.get_attack() 支援的攻擊
 
-# Model / Attack
-MODEL_NAME="${MODEL_NAME:-resnet50_at}"
-ATTACK_NAME="${ATTACK_NAME:-pgd}"
+# --- ImageNet preprocessing（DATASET=imagenet 才會用到） ---
+CROP_PCT="0.875"              # resize -> center crop 的 crop 比例
+INPUT_SIZE="224"              # 最終輸入尺寸（224x224）
+INTERPOLATION="bilinear"      # "bilinear" 或 "bicubic"
 
-# -----------------------------
-# Simple CLI override parser
-# -----------------------------
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --gpu) GPU="$2"; shift 2 ;;
-    --crop_pct) CROP_PCT="$2"; shift 2 ;;
-    --input_size) INPUT_SIZE="$2"; shift 2 ;;
-    --interpolation) INTERP="$2"; shift 2 ;;
-    --data_dir) DATA_DIR="$2"; shift 2 ;;
-    --label_file) LABEL_FILE="$2"; shift 2 ;;
-    --dataset) DATASET="$2"; shift 2 ;;
-    --batchsize) BATCHSIZE="$2"; shift 2 ;;
-    --num_workers) NUM_WORKERS="$2"; shift 2 ;;
-    --model_name) MODEL_NAME="$2"; shift 2 ;;
-    --attack_name) ATTACK_NAME="$2"; shift 2 ;;
-    -h|--help)
-      cat <<EOF
-Usage:
-  ./run_attack.sh [options]
+# ============================================================
+# ======================= 防呆檢查區 ==========================
+# ============================================================
 
-Options:
-  --gpu <id>                 GPU id(s). Default: ${GPU}
-  --crop_pct <float>         Center crop percent. Default: ${CROP_PCT}
-  --input_size <int>         Input size after crop. Default: ${INPUT_SIZE}
-  --interpolation <mode>     bilinear|bicubic. Default: ${INTERP}
-  --data_dir <path>          Dataset root dir. Default: ${DATA_DIR}
-  --label_file <path>        ImageNet label file. Default: ${LABEL_FILE}
-  --dataset <name>           imagenet|cifar10. Default: ${DATASET}
-  --batchsize <int>          Batch size. Default: ${BATCHSIZE}
-  --num_workers <int>        DataLoader workers. Default: ${NUM_WORKERS}
-  --model_name <name>        Model name in model zoo. Default: ${MODEL_NAME}
-  --attack_name <name>       Attack name in registry. Default: ${ATTACK_NAME}
-
-Env overrides (same keys): GPU, CROP_PCT, INPUT_SIZE, INTERP, DATA_DIR, LABEL_FILE,
-                          DATASET, BATCHSIZE, NUM_WORKERS, MODEL_NAME, ATTACK_NAME
-EOF
-      exit 0
-      ;;
-    *)
-      echo "[ERROR] Unknown argument: $1" >&2
-      echo "        Run: ./run_attack.sh --help" >&2
-      exit 1
-      ;;
-  esac
-done
-
-# -----------------------------
-# Basic sanity checks
-# -----------------------------
-if [[ "${DATASET}" == "imagenet" ]]; then
-  if [[ "${DATA_DIR}" == "DATA_PATH" || -z "${DATA_DIR}" ]]; then
-    echo "[ERROR] DATA_DIR is not set. Provide --data_dir or env DATA_DIR." >&2
-    exit 1
-  fi
-  if [[ "${LABEL_FILE}" == "LABEL_PATH" || -z "${LABEL_FILE}" ]]; then
-    echo "[ERROR] LABEL_FILE is not set. Provide --label_file or env LABEL_FILE." >&2
-    exit 1
-  fi
-fi
-
-if [[ "${INTERP}" != "bilinear" && "${INTERP}" != "bicubic" ]]; then
-  echo "[ERROR] interpolation must be bilinear or bicubic. Got: ${INTERP}" >&2
+if [[ "${DATASET}" != "cifar10" && "${DATASET}" != "imagenet" ]]; then
+  echo "[ERROR] DATASET must be 'cifar10' or 'imagenet'. Got: ${DATASET}" >&2
   exit 1
 fi
 
-echo "[INFO] Running attack with:"
+if [[ "${INTERPOLATION}" != "bilinear" && "${INTERPOLATION}" != "bicubic" ]]; then
+  echo "[ERROR] INTERPOLATION must be 'bilinear' or 'bicubic'. Got: ${INTERPOLATION}" >&2
+  exit 1
+fi
+
+if [[ "${DATASET}" == "imagenet" ]]; then
+  if [[ "${DATA_DIR}" == "DATA_PATH" || -z "${DATA_DIR}" ]]; then
+    echo "[ERROR] For ImageNet, you must set DATA_DIR in this .sh (currently: ${DATA_DIR})." >&2
+    exit 1
+  fi
+  if [[ "${LABEL_FILE}" == "LABEL_PATH" || -z "${LABEL_FILE}" ]]; then
+    echo "[ERROR] For ImageNet, you must set LABEL_FILE in this .sh (currently: ${LABEL_FILE})." >&2
+    exit 1
+  fi
+fi
+
+echo "[INFO] Running classification attack:"
 echo "  GPU=${GPU}"
 echo "  DATASET=${DATASET}"
 echo "  DATA_DIR=${DATA_DIR}"
 echo "  LABEL_FILE=${LABEL_FILE}"
-echo "  MODEL_NAME=${MODEL_NAME}"
-echo "  ATTACK_NAME=${ATTACK_NAME}"
 echo "  BATCHSIZE=${BATCHSIZE}"
 echo "  NUM_WORKERS=${NUM_WORKERS}"
+echo "  MODEL_NAME=${MODEL_NAME}"
+echo "  ATTACK_NAME=${ATTACK_NAME}"
 echo "  CROP_PCT=${CROP_PCT}"
 echo "  INPUT_SIZE=${INPUT_SIZE}"
-echo "  INTERP=${INTERP}"
+echo "  INTERPOLATION=${INTERPOLATION}"
 echo
 
-# -----------------------------
-# Run
-# -----------------------------
-python run_attack.py \
+# ============================================================
+# ============================ 執行 ===========================
+# ============================================================
+
+python3 run_attack.py \
   --gpu "${GPU}" \
   --crop_pct "${CROP_PCT}" \
   --input_size "${INPUT_SIZE}" \
-  --interpolation "${INTERP}" \
+  --interpolation "${INTERPOLATION}" \
   --data_dir "${DATA_DIR}" \
   --label_file "${LABEL_FILE}" \
   --batchsize "${BATCHSIZE}" \

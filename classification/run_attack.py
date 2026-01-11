@@ -2,11 +2,11 @@ import torch
 from torchvision import transforms
 import math
 import argparse
-from ares.utils.registry import registry
-from ares.utils.metrics import AverageMeter, accuracy
-from ares.utils.logger import setup_logger
-from ares.dataset.imagenet_dataset import ImageNetDataset
-from ares.model import cifar_model_zoo, imagenet_model_zoo
+from ..ares.utils.registry import registry
+from ..ares.utils.metrics import AverageMeter, accuracy
+from ..ares.utils.logger import setup_logger
+from ..ares.dataset.imagenet_dataset import ImageNetDataset
+from ..ares.model import cifar_model_zoo, imagenet_model_zoo
 from torchvision.datasets import CIFAR10
 from classification.attack_configs import attack_configs
 
